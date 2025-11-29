@@ -130,6 +130,9 @@ Config.Language = {
     entering_passenger = "Entering train as passenger...",
     exiting_train = "Exiting train",
     press_twice_exit = "Press F twice to exit the train",
+    exited_train = "You have exited the train. Approach the train and press F to get back on.",
+    reentered_train = "You have re-entered the train.",
+    stop_job_command = "Use /stoptrainjob to completely stop the job.",
 }
 
 Config.Stations = {

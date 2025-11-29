@@ -3,7 +3,6 @@ local currentTrainJob = nil
 local helpNotificationShown = {}
 local lastJobStartTime = 0
 local PlayerData = {}
-local lastExitPressTime = nil
 
 RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function()
     PlayerData = QBCore.Functions.GetPlayerData()
@@ -76,50 +75,6 @@ local function manageNPC(mode, distance)
             SetEntityAsMissionEntity(spawnedNPCs[mode], false, false)
             DeleteEntity(spawnedNPCs[mode])
             spawnedNPCs[mode] = nil
-        end
-    end
-end
-
-local function manageTrainPeds(train, stationData, action)
-    if not DoesEntityExist(train) then return end
-    
-    if action == "board" then
-        -- Faire monter des PNJ dans le train
-        for i = 1, math.random(2, 6) do
-            local pedModel = GetHashKey("a_m_y_business_01")
-            RequestModel(pedModel)
-            while not HasModelLoaded(pedModel) do
-                Citizen.Wait(10)
-            end
-            
-            local ped = CreatePed(4, pedModel, stationData.pos.x + math.random(-5, 5), stationData.pos.y + math.random(-5, 5), stationData.pos.z, 0.0, true, false)
-            
-            SetEntityAsMissionEntity(ped, true, true)
-            SetBlockingOfNonTemporaryEvents(ped, true)
-            
-            -- Faire monter le PNJ dans un siège passager aléatoire
-            local seat = math.random(0, 10)
-            TaskEnterVehicle(ped, train, -1, seat, 1.0, 1, 0)
-            
-            -- Supprimer le PNJ après un délai
-            Citizen.SetTimeout(30000, function()
-                if DoesEntityExist(ped) then
-                    DeleteEntity(ped)
-                end
-            end)
-        end
-    elseif action == "exit" then
-        -- Faire descendre tous les PNJ du train
-        local peds = GetGamePool("CPed")
-        for _, ped in ipairs(peds) do
-            if IsPedInVehicle(ped, train, false) and not IsPedAPlayer(ped) then
-                TaskLeaveVehicle(ped, train, 0)
-                Citizen.SetTimeout(10000, function()
-                    if DoesEntityExist(ped) then
-                        DeleteEntity(ped)
-                    end
-                end)
-            end
         end
     end
 end
@@ -665,111 +620,63 @@ function StartTrainJob(mode, npcCoords)
         end
     end)
     
-    -- Thread pour permettre aux joueurs d'entrer comme passagers
     Citizen.CreateThread(function()
-        while currentTrainJob do
-            if currentTrainJob.currentStation > #stations then break end
-            
-            local waitTime = 1000
-            
-            if currentTrainJob and currentTrainJob.train and DoesEntityExist(currentTrainJob.train) then
-                local playerPed = PlayerPedId()
-                local playerCoords = GetEntityCoords(playerPed)
-                local trainCoords = GetEntityCoords(currentTrainJob.train)
-                local distanceToTrain = #(playerCoords - trainCoords)
-                
-                -- Vérifier si le joueur est près du train mais pas dedans
-                if distanceToTrain < 10.0 and not IsPedInVehicle(playerPed, currentTrainJob.train, false) then
-                    waitTime = 0
-                    
-                    -- Afficher l'aide pour entrer comme passager
-                    DrawMissionText(Config.Language.enter_as_passenger, 1000)
-                    
-                    -- Entrer comme passager avec la touche G
-                    if IsControlJustPressed(0, 47) then
-                        enterTrainAsPassenger(currentTrainJob.train)
-                    end
-                end
-            end
-            
-            Wait(waitTime)
-        end
-    end)
-    
-    -- Thread de contrôle principal (conducteur et passagers)
-    Citizen.CreateThread(function()
-        local exitPressCount = 0
-        local lastExitPressTime = 0
+    while currentTrainJob do
+        if currentTrainJob.currentStation > #stations then break end
         
-        while currentTrainJob do
-            if currentTrainJob.currentStation > #stations then break end
-            
-            local waitTime = 1000
-            
-            if not currentTrainJob then return end
-            
-            if currentTrainJob.isInsideTrain then
-                if IsPedInAnyTrain(PlayerPedId()) then
-                    waitTime = 0
-                    
+        local waitTime = 1000
+        
+        if not currentTrainJob then return end
+        
+        if currentTrainJob.isInsideTrain then
+            if IsPedInAnyTrain(PlayerPedId()) then
+                waitTime = 0
+                
+                -- Désactiver la sortie véhicule normale
+                DisableControlAction(0, 75, true)
+                
+                if IsControlPressed(0, 32) then
+                    currentTrainJob.increaseSpeed()
+                end
+                
+                if IsControlPressed(0, 31) then
+                    currentTrainJob.decreaseSpeed()
+                end
+                
+                if IsControlJustPressed(0, 38) then
+                    currentTrainJob.toggleDoors()
+                end
+                
+                -- F simple pour sortir du train (sans quitter le métier)
+                if IsDisabledControlJustPressed(0, 75) then
                     local playerPed = PlayerPedId()
-                    local vehicle = GetVehiclePedIsIn(playerPed, false)
-                    
-                    -- Gestion des passagers
-                    if vehicle and GetPedInVehicleSeat(vehicle, -1) ~= playerPed then
-                        -- Le joueur est un passager
-                        DisableControlAction(0, 75, true)
-                        
-                        if IsDisabledControlJustPressed(0, 75) then
-                            local currentTime = GetGameTimer()
-                            if lastExitPressTime and currentTime - lastExitPressTime < 1000 then
-                                -- Double tap pour sortir
-                                TaskLeaveVehicle(playerPed, vehicle, 0)
-                                notify(Config.Language.exiting_train, "info")
-                                lastExitPressTime = nil
-                            else
-                                notify(Config.Language.press_twice_exit, "info")
-                                lastExitPressTime = currentTime
-                            end
-                        end
-                    else
-                        -- Le joueur est conducteur
-                        DisableControlAction(0, 75, true)
-                        DisableControlAction(0, 86, true)
-                        
-                        if IsControlPressed(0, 32) then
-                            currentTrainJob.increaseSpeed()
-                        end
-                        
-                        if IsControlPressed(0, 31) then
-                            currentTrainJob.decreaseSpeed()
-                        end
-                        
-                        if IsControlJustPressed(0, 38) then
-                            currentTrainJob.toggleDoors()
-                        end
-                        
-                        if IsDisabledControlJustPressed(0, 75) then
-                            exitPressCount = exitPressCount + 1
-                            local currentTime = GetGameTimer()
-                            if currentTime - lastExitPressTime > 1000 then
-                                exitPressCount = 0
-                            end
-                            
-                            if exitPressCount >= 2 then
-                                EndTrainJob(false)
-                                exitPressCount = 0
-                            end
-                            
-                            lastExitPressTime = currentTime
-                        end
-                    end
+                    TaskLeaveVehicle(playerPed, currentTrainJob.train, 0)
+                    currentTrainJob.isInsideTrain = false
+                    notify("You have exited the train. Approach the train and press [F] to get back on.", "primary")
                 end
             end
+        else
+            -- Le joueur est sorti du train mais le job continue
+            waitTime = 0
             
-            Wait(waitTime)
+            local playerPed = PlayerPedId()
+            local trainCoords = GetEntityCoords(currentTrainJob.train)
+            local playerCoords = GetEntityCoords(playerPed)
+            local distance = #(playerCoords - trainCoords)
+            
+            if distance < 5.0 then
+                -- F pour remonter dans le train
+                if IsControlJustPressed(0, 75) then
+                    TaskWarpPedIntoVehicle(playerPed, currentTrainJob.train, -1)
+                    currentTrainJob.isInsideTrain = true
+                    notify("You got back on the train.", "success")
+                end
+            end
         end
-    end)
+        
+        Wait(waitTime)
+    end
+end)
 end
 
 function rotatePoint(center, point, angle)
@@ -799,17 +706,7 @@ RegisterNetEvent("qbx_trainjob:client:doorsOpened", function()
         local trainSpeed = GetEntitySpeed(currentTrainJob.train)
         if trainSpeed < 0.1 then
             currentTrainJob.isStopping = true
-            
-            -- Faire descendre les PNJ
-            manageTrainPeds(currentTrainJob.train, currentStationData, "exit")
-            
             startProgress(Config.WaitTime[currentTrainJob.mode] + 4, Config.Language.waiting_at_station)
-            
-            -- Après un court délai, faire monter de nouveaux PNJ
-            Citizen.SetTimeout(2000, function()
-                manageTrainPeds(currentTrainJob.train, currentStationData, "board")
-            end)
-            
             Wait(Config.WaitTime[currentTrainJob.mode] * 1000)
             currentTrainJob.isStopping = false
             
@@ -826,6 +723,15 @@ RegisterNetEvent("qbx_trainjob:client:doorsOpened", function()
         currentTrainJob.toggleDoors()
     end
 end)
+
+RegisterCommand('stoptrainjob', function()
+    if currentTrainJob then
+        EndTrainJob(false)
+        notify("Train station job stopped.", "success")
+    else
+        notify("No active train jobs.", "error")
+    end
+end, false)
 
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName == GetCurrentResourceName() then
