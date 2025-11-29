@@ -1,4 +1,4 @@
-E + F = get out of the train.
+E + F = driver get out of the train.
 
 
 G = passenger boards the train.
